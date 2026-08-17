@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Waste Bins - Smart Waste Collection System</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+
+  <nav class="navbar">
+    <div class="navbar-brand"><span class="icon">🗑️</span> Smart Waste Collection System</div>
+    <div class="navbar-links">
+      <a href="/">Overview</a>
+      <a href="/bins">Waste Bins</a>
+      <a href="/routes">Route Optimization</a>
+      <a href="/vehicles">Vehicles</a>
+    </div>
+  </nav>
+
+  <div class="page-container">
+    <div class="page-header">
+      <div>
+        <h1>Waste Bins</h1>
+        <p>Sensor Monitoring &mdash; live fill levels across all registered bins</p>
+      </div>
+      <button class="btn btn-primary" id="btnSimulate">📡 Simulate Sensor Data</button>
+    </div>
+
+    <div class="panel">
+      <table>
+        <thead>
+          <tr>
+            <th>Bin ID</th>
+            <th>Location</th>
+            <th>Waste Type</th>
+            <th>Fill Level</th>
+            <th>Threshold</th>
+            <th>Status</th>
+            <th>Collection Status</th>
+            <th>Last Updated</th>
+          </tr>
+        </thead>
+        <tbody id="binsTableBody">
+          <!-- populated by JS -->
+        </tbody>
+      </table>
+      <div id="emptyState" class="empty-state" style="display:none;">No bins found.</div>
+    </div>
+  </div>
+
+  <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
+  <script>
+    async function loadBins() {
+      const bins = (await API.get('/api/bins')).filter(b => b.bin_id !== 'DEPOT' && b.bin_id !== 'DUMP');
+      const tbody = document.getElementById('binsTableBody');
+
+      if (bins.length === 0) {
+        document.getElementById('emptyState').style.display = 'block';
+        tbody.innerHTML = '';
+        return;
+      }
+
+      // Sort by fill level descending so most urgent bins show first
+      bins.sort((a, b) => b.fill_level - a.fill_level);
+
+      tbody.innerHTML = bins.map(bin => {
+        const barColor = fillColor(bin.fill_level, bin.threshold);
+        const pct = Math.min(bin.fill_level, 100);
+        return `
+          <tr>
+            <td><b>${bin.bin_id}</b></td>
+            <td>${bin.location_name}</td>
+            <td>${bin.waste_type}</td>
+            <td>
+              <span class="fill-bar-track">
+                <span class="fill-bar-fill" style="width:${pct}%; background:${barColor};"></span>
+              </span>
+              ${bin.fill_level.toFixed(1)}%
+            </td>
+            <td>${bin.threshold}%</td>
+            <td>${statusBadge(bin.status)}</td>
+            <td>${collectionStatusBadge(bin.collection_status)}</td>
+            <td class="text-muted" style="font-size:12px;">${bin.last_updated}</td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    document.getElementById('btnSimulate').addEventListener('click', async (e) => {
+      e.target.disabled = true;
+      try {
+        const result = await API.post('/api/bins/simulate');
+        showToast(`Simulated sensor readings for ${result.updated.length} bins`);
+        await loadBins();
+      } catch (err) {
+        showToast(err.message, true);
+      } finally {
+        e.target.disabled = false;
+      }
+    });
+
+    loadBins();
+  </script>
+</body>
+</html>

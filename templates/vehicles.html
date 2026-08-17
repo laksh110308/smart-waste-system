@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Vehicles - Smart Waste Collection System</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+
+  <nav class="navbar">
+    <div class="navbar-brand"><span class="icon">🗑️</span> Smart Waste Collection System</div>
+    <div class="navbar-links">
+      <a href="/">Overview</a>
+      <a href="/bins">Waste Bins</a>
+      <a href="/routes">Route Optimization</a>
+      <a href="/vehicles">Vehicles</a>
+    </div>
+  </nav>
+
+  <div class="page-container">
+    <div class="page-header">
+      <div>
+        <h1>Vehicle Fleet</h1>
+        <p>Collection trucks &mdash; availability and capacity</p>
+      </div>
+    </div>
+
+    <div class="card-grid" id="vehicleGrid">
+      <!-- populated by JS -->
+    </div>
+  </div>
+
+  <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
+  <script>
+    async function loadVehicles() {
+      const vehicles = await API.get('/api/vehicles');
+      const grid = document.getElementById('vehicleGrid');
+
+      grid.innerHTML = vehicles.map(v => {
+        const badge = v.available
+          ? `<span class="badge badge-available">Available</span>`
+          : `<span class="badge badge-onroute">On Route</span>`;
+        return `
+          <div class="vehicle-card">
+            <div class="vehicle-name">🚛 ${v.vehicle_name}</div>
+            <div class="vehicle-id">${v.vehicle_id}</div>
+            ${badge}
+            <div class="vehicle-meta">
+              <span>Capacity</span>
+              <span><b>${v.capacity} bins</b></span>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    loadVehicles();
+  </script>
+</body>
+</html>

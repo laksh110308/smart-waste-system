@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Route Optimization - Smart Waste Collection System</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+
+  <nav class="navbar">
+    <div class="navbar-brand"><span class="icon">🗑️</span> Smart Waste Collection System</div>
+    <div class="navbar-links">
+      <a href="/">Overview</a>
+      <a href="/bins">Waste Bins</a>
+      <a href="/routes">Route Optimization</a>
+      <a href="/vehicles">Vehicles</a>
+    </div>
+  </nav>
+
+  <div class="page-container">
+    <div class="page-header">
+      <div>
+        <h1>Route Optimization &amp; Collection</h1>
+        <p>A* algorithm generates the route; assign a vehicle, then track collection stop by stop</p>
+      </div>
+      <button class="btn btn-secondary" id="btnAssign">🧭 Generate &amp; Assign Route</button>
+    </div>
+
+    <div class="panel" id="activeRoutesPanel">
+      <h2>Active Routes</h2>
+      <div id="activeRoutesContent"><p class="text-muted">Loading...</p></div>
+    </div>
+  </div>
+
+  <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
+  <script>
+    async function loadActiveRoutes() {
+      const routes = await API.get('/api/routes/active');
+      const container = document.getElementById('activeRoutesContent');
+
+      if (routes.length === 0) {
+        container.innerHTML = `<div class="empty-state">No active routes. Click "Generate &amp; Assign Route" to create one from bins currently needing collection.</div>`;
+        return;
+      }
+
+      const sections = await Promise.all(routes.map(async (route) => {
+        const progress = await API.get(`/api/route/${route.route_id}`);
+        return renderRoute(progress);
+      }));
+
+      container.innerHTML = sections.join('<hr style="margin:20px 0; border:none; border-top:1px solid var(--color-border);">');
+      attachRouteHandlers();
+    }
+
+    function renderRoute(progress) {
+      const r = progress.route;
+      const stops = progress.stops;
+      const collectedCount = stops.filter(s => s.collected).length;
+
+      const stopsHtml = stops.map(s => `
+        <tr>
+          <td>${s.sequence_order}</td>
+          <td><b>${s.bin_id}</b></td>
+          <td>${s.collected ? '<span class="badge badge-collected">Collected</span>' : '<span class="badge badge-normal">Pending</span>'}</td>
+          <td>
+            ${s.collected
+              ? ''
+              : `<button class="btn btn-sm btn-outline btn-collect" data-route="${r.route_id}" data-bin="${s.bin_id}">Mark Collected</button>`}
+          </td>
+        </tr>
+      `).join('');
+
+      let actionButton = '';
+      if (r.status === 'Planned') {
+        actionButton = `<button class="btn btn-primary btn-sm btn-start" data-route="${r.route_id}">▶ Start Collection</button>`;
+      } else if (r.status === 'In Progress' && collectedCount === stops.length) {
+        actionButton = `<button class="btn btn-secondary btn-sm btn-complete" data-route="${r.route_id}">✅ Complete Route</button>`;
+      } else if (r.status === 'In Progress') {
+        actionButton = `<span class="text-muted" style="font-size:13px;">${collectedCount} / ${stops.length} bins collected so far</span>`;
+      }
+
+      return `
+        <div>
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:10px;">
+            <div>
+              <b>Route #${r.route_id}</b> &nbsp; ${routeStatusBadge(r.status)}
+              &nbsp; <span class="text-muted" style="font-size:13px;">Vehicle: ${r.vehicle_id} &middot; ${r.total_distance_km} km &middot; ${r.estimated_time_min} min &middot; ${r.bins_count} bins</span>
+            </div>
+            <div>${actionButton}</div>
+          </div>
+          <table>
+            <thead><tr><th>Stop #</th><th>Bin</th><th>Status</th><th></th></tr></thead>
+            <tbody>${stopsHtml}</tbody>
+          </table>
+        </div>
+      `;
+    }
+
+    function attachRouteHandlers() {
+      document.querySelectorAll('.btn-start').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          btn.disabled = true;
+          try {
+            await API.post(`/api/route/${btn.dataset.route}/start`);
+            showToast(`Route #${btn.dataset.route} started`);
+            await loadActiveRoutes();
+          } catch (err) { showToast(err.message, true); }
+        });
+      });
+
+      document.querySelectorAll('.btn-collect').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          btn.disabled = true;
+          try {
+            await API.post(`/api/route/${btn.dataset.route}/collect/${btn.dataset.bin}`);
+            showToast(`${btn.dataset.bin} marked collected`);
+            await loadActiveRoutes();
+          } catch (err) { showToast(err.message, true); }
+        });
+      });
+
+      document.querySelectorAll('.btn-complete').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          btn.disabled = true;
+          try {
+            await API.post(`/api/route/${btn.dataset.route}/complete`);
+            showToast(`Route #${btn.dataset.route} completed`);
+            await loadActiveRoutes();
+          } catch (err) { showToast(err.message, true); }
+        });
+      });
+    }
+
+    document.getElementById('btnAssign').addEventListener('click', async (e) => {
+      e.target.disabled = true;
+      try {
+        const result = await API.post('/api/route/assign');
+        showToast(`Route #${result.route_id} assigned to ${result.vehicle_name}`);
+        await loadActiveRoutes();
+      } catch (err) {
+        showToast(err.message, true);
+      } finally {
+        e.target.disabled = false;
+      }
+    });
+
+    loadActiveRoutes();
+  </script>
+</body>
+</html>

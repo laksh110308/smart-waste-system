@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Overview - Smart Waste Collection System</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css">
+</head>
+<body>
+
+  <nav class="navbar">
+    <div class="navbar-brand"><span class="icon">🗑️</span> Smart Waste Collection System</div>
+    <div class="navbar-links">
+      <a href="/">Overview</a>
+      <a href="/bins">Waste Bins</a>
+      <a href="/routes">Route Optimization</a>
+      <a href="/vehicles">Vehicles</a>
+    </div>
+  </nav>
+
+  <div class="page-container">
+    <div class="page-header">
+      <div>
+        <h1>City Overview</h1>
+        <p>AI-enabled monitoring, route optimization, and collection status across Chennai</p>
+      </div>
+    </div>
+
+    <div class="stats-grid" id="statsGrid">
+      <!-- populated by JS -->
+    </div>
+
+    <div class="actions-row">
+      <button class="btn btn-primary" id="btnSimulate">📡 Simulate Sensor Data</button>
+      <button class="btn btn-outline" id="btnDetect">🔍 Detect Full Bins</button>
+      <button class="btn btn-secondary" id="btnGenerate">🧭 Generate Optimized Route</button>
+      <button class="btn btn-outline" id="btnAssign">🚛 Assign Vehicle</button>
+    </div>
+
+    <div class="panel">
+      <h2>Live Bin Map</h2>
+      <div id="map"></div>
+      <div style="margin-top:10px; font-size:13px; display:flex; gap:18px; color:var(--color-text-muted);">
+        <span>🟢 Normal</span>
+        <span>🔴 Collection Required</span>
+        <span>🔵 Depot / Dumping Station</span>
+        <span id="routeLegend" style="display:none;">🟣 Latest optimized route</span>
+      </div>
+    </div>
+
+    <div class="panel" id="lastRoutePanel" style="display:none;">
+      <h2>Last Generated Route (preview)</h2>
+      <div id="lastRouteContent"></div>
+    </div>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
+  <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
+  <script>
+    let map, markersLayer, routeLayer;
+
+    function initMap() {
+      map = L.map('map').setView([13.0827, 80.2707], 11);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '&copy; OpenStreetMap contributors',
+        maxZoom: 18
+      }).addTo(map);
+      markersLayer = L.layerGroup().addTo(map);
+      routeLayer = L.layerGroup().addTo(map);
+    }
+
+    async function loadBinsOnMap() {
+      const bins = await API.get('/api/bins');
+      markersLayer.clearLayers();
+
+      bins.forEach(bin => {
+        let color = '#2E7D32'; // normal - green
+        let radius = 7;
+
+        if (bin.bin_id === 'DEPOT' || bin.bin_id === 'DUMP') {
+          color = '#0F4C75'; // blue
+          radius = 9;
+        } else if (bin.status === 'Collection Required') {
+          color = '#D64545'; // red
+        }
+
+        const marker = L.circleMarker([bin.latitude, bin.longitude], {
+          radius: radius,
+          fillColor: color,
+          color: '#fff',
+          weight: 2,
+          fillOpacity: 0.9
+        });
+
+        const popupContent = (bin.bin_id === 'DEPOT' || bin.bin_id === 'DUMP')
+          ? `<b>${bin.location_name}</b><br>${bin.bin_id === 'DEPOT' ? 'Collection Depot' : 'Dumping Station'}`
+          : `<b>${bin.bin_id} - ${bin.location_name}</b><br>Fill: ${bin.fill_level}%<br>Status: ${bin.status}<br>Waste type: ${bin.waste_type}`;
+
+        marker.bindPopup(popupContent);
+        marker.addTo(markersLayer);
+      });
+    }
+
+    async function loadStats() {
+      const s = await API.get('/api/dashboard/stats');
+      const grid = document.getElementById('statsGrid');
+      grid.innerHTML = `
+        <div class="stat-card"><div class="stat-label">Total Bins</div><div class="stat-value">${s.total_bins}</div></div>
+        <div class="stat-card"><div class="stat-label">Normal</div><div class="stat-value success">${s.normal_bins}</div></div>
+        <div class="stat-card"><div class="stat-label">Collection Required</div><div class="stat-value danger">${s.collection_required}</div></div>
+        <div class="stat-card"><div class="stat-label">Collected</div><div class="stat-value success">${s.collected_bins}</div></div>
+        <div class="stat-card"><div class="stat-label">Available Vehicles</div><div class="stat-value">${s.available_vehicles} / ${s.total_vehicles}</div></div>
+        <div class="stat-card"><div class="stat-label">Active Routes</div><div class="stat-value warning">${s.active_routes}</div></div>
+        <div class="stat-card"><div class="stat-label">Route Distance</div><div class="stat-value">${s.total_distance_km} km</div></div>
+        <div class="stat-card"><div class="stat-label">Completion</div><div class="stat-value">${s.completion_percentage}%</div></div>
+      `;
+    }
+
+    async function refreshAll() {
+      await Promise.all([loadStats(), loadBinsOnMap()]);
+    }
+
+    document.getElementById('btnSimulate').addEventListener('click', async (e) => {
+      e.target.disabled = true;
+      try {
+        const result = await API.post('/api/bins/simulate');
+        showToast(`Simulated sensor readings for ${result.updated.length} bins`);
+        await refreshAll();
+      } catch (err) {
+        showToast(err.message, true);
+      } finally {
+        e.target.disabled = false;
+      }
+    });
+
+    document.getElementById('btnDetect').addEventListener('click', async (e) => {
+      e.target.disabled = true;
+      try {
+        const required = await API.post('/api/bins/detect');
+        showToast(`${required.length} bin(s) currently need collection`);
+        await refreshAll();
+      } catch (err) {
+        showToast(err.message, true);
+      } finally {
+        e.target.disabled = false;
+      }
+    });
+
+    document.getElementById('btnGenerate').addEventListener('click', async (e) => {
+      e.target.disabled = true;
+      try {
+        const route = await API.post('/api/route/generate');
+        showToast(`Route generated: ${route.bins_count} bins, ${route.total_distance_km} km`);
+        drawRouteOnMap(route);
+        showRoutePreview(route);
+      } catch (err) {
+        showToast(err.message, true);
+      } finally {
+        e.target.disabled = false;
+      }
+    });
+
+    document.getElementById('btnAssign').addEventListener('click', async (e) => {
+      e.target.disabled = true;
+      try {
+        const result = await API.post('/api/route/assign');
+        showToast(`Route #${result.route_id} assigned to ${result.vehicle_name}`);
+        await refreshAll();
+        routeLayer.clearLayers();
+        document.getElementById('routeLegend').style.display = 'none';
+        document.getElementById('lastRoutePanel').style.display = 'none';
+      } catch (err) {
+        showToast(err.message, true);
+      } finally {
+        e.target.disabled = false;
+      }
+    });
+
+    function drawRouteOnMap(route) {
+      routeLayer.clearLayers();
+      // We need coordinates for each node in full_path -- fetch bins to map IDs to lat/lng
+      API.get('/api/bins').then(bins => {
+        const coordMap = {};
+        bins.forEach(b => coordMap[b.bin_id] = [b.latitude, b.longitude]);
+        const latlngs = route.full_path.map(id => coordMap[id]).filter(Boolean);
+        L.polyline(latlngs, { color: '#8E44AD', weight: 4, opacity: 0.8, dashArray: '6 6' }).addTo(routeLayer);
+        document.getElementById('routeLegend').style.display = 'inline';
+      });
+    }
+
+    function showRoutePreview(route) {
+      const panel = document.getElementById('lastRoutePanel');
+      const content = document.getElementById('lastRouteContent');
+      content.innerHTML = `
+        <p><b>Visiting order:</b> DEPOT → ${route.bin_sequence.join(' → ')} → DUMP</p>
+        <p><b>Total distance:</b> ${route.total_distance_km} km &nbsp; | &nbsp;
+           <b>Estimated time:</b> ${route.estimated_time_min} min &nbsp; | &nbsp;
+           <b>Bins:</b> ${route.bins_count} &nbsp; | &nbsp;
+           <b>Efficiency:</b> ${route.efficiency_km_per_bin} km/bin</p>
+        <p class="text-muted">This is a preview only. Click "Assign Vehicle" to commit this route to a truck.</p>
+      `;
+      panel.style.display = 'block';
+    }
+
+    initMap();
+    refreshAll();
+  </script>
+</body>
+</html>
